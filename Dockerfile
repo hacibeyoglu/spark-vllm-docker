@@ -118,6 +118,12 @@ ARG FLASHINFER_CUDA_ARCH_LIST="12.1a"
 ENV FLASHINFER_CUDA_ARCH_LIST=${FLASHINFER_CUDA_ARCH_LIST}
 WORKDIR $VLLM_BASE_DIR
 ARG FLASHINFER_REF=main
+ARG FLASHINFER_BUILD_PYTHON=/usr/bin/python3
+
+# FlashInfer's source checkout may carry a .python-version. Keep no-isolation
+# builds on the prepared system interpreter instead of letting upstream source
+# select a separate uv-managed Python without the installed build dependencies.
+ENV UV_PYTHON_DOWNLOADS=never
 
 # --- CACHE BUSTER ---
 # Change this argument to force a re-download of FlashInfer
@@ -125,7 +131,7 @@ ARG CACHEBUST_FLASHINFER=1
 
 # Additional deps
 RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
-     uv pip install packaging
+     uv pip install --python "$FLASHINFER_BUILD_PYTHON" packaging filelock
 
 # Smart Git Clone (Fetch changes instead of full re-clone)
 RUN --mount=type=cache,id=repo-cache,target=/repo-cache \
@@ -226,12 +232,13 @@ RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
     patch -p1 < flashinfer_cache.patch && \
     # flashinfer-python
     sed -i -e 's/license = "Apache-2.0"/license = { text = "Apache-2.0" }/' -e '/license-files/d' pyproject.toml && \
-    uv build --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
+    "$FLASHINFER_BUILD_PYTHON" -c 'import filelock, packaging, requests, torch, tqdm' && \
+    uv build --python "$FLASHINFER_BUILD_PYTHON" --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
     # flashinfer-cubin
-    cd flashinfer-cubin && uv build --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
+    cd flashinfer-cubin && uv build --python "$FLASHINFER_BUILD_PYTHON" --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
     # flashinfer-jit-cache
     cd ../flashinfer-jit-cache && \
-    uv build --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
+    uv build --python "$FLASHINFER_BUILD_PYTHON" --no-build-isolation --wheel . --out-dir=/workspace/wheels -v && \
     # dump git ref and target architecture in the wheels dir
     cd .. && \
     git rev-parse HEAD > /workspace/wheels/.flashinfer-commit && \
@@ -351,6 +358,7 @@ ARG VLLM_PRESET_PRS=""
 ARG VLLM_APPLY_PRESET_PRS=""
 ARG VLLM_PRS=""
 ARG VLLM_PRESERVE_SM12X_TARGET=0
+ARG VLLM_PATCH_B12X_C128A_ALIGNMENT=0
 
 # PR refs include the branch history they were developed on. Use upstream main
 # only to identify each PR's patch range, then apply that patch to VLLM_REF.
@@ -464,6 +472,14 @@ RUN set -eux; \
 # It is also safe for older refs (backend absent) and refs that already contain
 # the fix (idempotent); unknown partial source shapes fail the build.
 COPY docker/patch_vllm_*.py docker/pin_cutlass_dsl.py /tmp/vllm-patches/
+
+# TEMPORARY PATCH: local-inference-lab/vllm commit ad848fc41 added a dynamic
+# DeepSeek V4 C128A top-k width but omitted the alignment constant import.
+# Keep this B12X-only and source-aware so it skips refs where the bug is absent
+# or already fixed. Remove after the oldest supported B12X ref contains a fix.
+RUN VLLM_PATCH_B12X_C128A_ALIGNMENT="${VLLM_PATCH_B12X_C128A_ALIGNMENT}" \
+    python3 /tmp/vllm-patches/patch_vllm_b12x_c128a_topk_alignment.py .
+
 RUN python3 /tmp/vllm-patches/patch_vllm_flashinfer_b12x_swigluoai.py .
 
 # TEMPORARY PATCH: vLLM PR #49408 / commit d6dbdb9 misplaced the XPU-only

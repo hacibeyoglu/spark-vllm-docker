@@ -29,7 +29,7 @@ VLLM_REF="main"
 VLLM_REF_SET=false
 EXP_B12X=false
 EXP_B12X_VLLM_REPO="https://github.com/local-inference-lab/vllm"
-EXP_B12X_VLLM_REF="dev/gilded-gnosis"
+EXP_B12X_VLLM_REF="dev/infernal-invocation"
 EXP_B12X_PACKAGE_REPO="https://github.com/lukealonso/b12x.git"
 EXP_B12X_PACKAGE_REF="master"
 EXP_B12X_TORCH_VERSION="2.13.0"
@@ -1146,6 +1146,7 @@ if [ "$NO_BUILD" = false ]; then
                 # 10.3a and 12.1a from being reduced to plain sm_100/sm_120
                 # without overriding explicit family-target selections.
                 VLLM_CMD+=("--build-arg" "VLLM_PRESERVE_SM12X_TARGET=1")
+                VLLM_CMD+=("--build-arg" "VLLM_PATCH_B12X_C128A_ALIGNMENT=1")
             fi
 
             VLLM_CMD+=(".")
